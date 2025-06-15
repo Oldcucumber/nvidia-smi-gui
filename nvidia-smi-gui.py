@@ -15,14 +15,14 @@ from subprocess import Popen, PIPE
 is_running = False
 
 THEME_LIGHT = {
-    "bg": "white", "text": "#333333", "sub_text": "#666666", "title_text": "#000000",
-    "border": "#e0e0e0", "progress_bg": "#f0f0f0", "progress_chunk": "#0078d4",
+    "bg": "#f0f5f9", "text": "#333333", "sub_text": "#666666", "title_text": "#000000",
+    "border": "#f0f5f9", "progress_bg": "#c9d6df", "progress_chunk": "#0078d4",
     "progress_text": "#555555"
 }
 
 THEME_DARK = {
-    "bg": "#2d2d2d", "text": "#e0e0e0", "sub_text": "#a0a0a0", "title_text": "#ffffff",
-    "border": "#454545", "progress_bg": "#3c3c3c", "progress_chunk": "#0078d4",
+    "bg": "#191919", "text": "#e0e0e0", "sub_text": "#a0a0a0", "title_text": "#ffffff",
+    "border": "#191919", "progress_bg": "#3c3c3c", "progress_chunk": "#0078d4",
     "progress_text": "#e0e0e0"
 }
 

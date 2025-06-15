@@ -4,10 +4,10 @@ A Qt based GUI backend for monitering nvidia graphic devices through nvidia-smi.
 ## Dependencies:
 * nvidia-smi
 * python3
-* python3-pyqt4
+* python3-pyqt6
 
 ## How to Use It
-simply fire up python3 to start the monitor, you will need PyQt4 and nvidia-smi successfully installed to run the script:
+#### simply fire up python3 to start the monitor, you will need PyQt4 and nvidia-smi successfully installed to run the script:
 
     $ python3 ./nvidia-smi-gui.py
     
@@ -16,7 +16,16 @@ or
     $ chmod +x ./nvidia-smi-gui.py
     $ ./nvidia-smi-gui.py
 
-## Screenshots
+#### start with dark mode:
+
+    $ python3 ./nvidia-smi-gui.py --dark
+
+or
+
+    $ chmod +x ./nvidia-smi-gui.py
+    $ ./nvidia-smi-gui.py --dark
+
+## Screenshots(TODO: upload screenshots of the new version)
 ![Screenshot1](https://raw.github.com/imkzh/nvidia-smi-gui/master/screenshots/1.png "Status of the GPU installed on my computer")
 
 ![Screenshot2](https://raw.github.com/imkzh/nvidia-smi-gui/master/screenshots/2.png "Status of 4 GPUs installed on server")

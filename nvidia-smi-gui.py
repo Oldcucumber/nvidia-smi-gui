@@ -60,14 +60,17 @@ class GPUInfoPanel(QtWidgets.QWidget):
         self.lbl_power_limit = QtWidgets.QLabel("N/A")
         self.progress_mem = QtWidgets.QProgressBar()
         self.progress_power = QtWidgets.QProgressBar()
-        self.lbl_mem_percentage = QtWidgets.QLabel("0%")
-        self.lbl_power_percentage = QtWidgets.QLabel("0%")
         self.icon_temp = QtWidgets.QPushButton("")
         self.icon_fan = QtWidgets.QPushButton("")
         self.icon_utilization = QtWidgets.QPushButton("")
         self.icon_clock = QtWidgets.QPushButton("")
         self.icon_mem = QtWidgets.QPushButton("")
         self.icon_power = QtWidgets.QPushButton("")
+
+        # 明确设置进度条显示格式
+        self.progress_mem.setFormat('%p%')
+        self.progress_power.setFormat('%p%')
+
 
     def _init_layout(self):
         main_layout = QtWidgets.QVBoxLayout(self)
@@ -89,15 +92,18 @@ class GPUInfoPanel(QtWidgets.QWidget):
         main_layout.addLayout(stats_layout)
 
         bars_layout = QtWidgets.QGridLayout()
-        bars_layout.setColumnStretch(2, 1)
+        bars_layout.setColumnStretch(2, 1) # 让进度条占据所有剩余空间
+        
+        # 内存条布局
         bars_layout.addWidget(self.icon_mem, 0, 0)
         bars_layout.addLayout(self._create_value_total_layout(self.lbl_mem_used, self.sep_mem, self.lbl_mem_total), 0, 1)
         bars_layout.addWidget(self.progress_mem, 0, 2)
-        bars_layout.addWidget(self.lbl_mem_percentage, 0, 3)
+        
+        # 功耗条布局
         bars_layout.addWidget(self.icon_power, 1, 0)
         bars_layout.addLayout(self._create_value_total_layout(self.lbl_power_draw, self.sep_power, self.lbl_power_limit), 1, 1)
         bars_layout.addWidget(self.progress_power, 1, 2)
-        bars_layout.addWidget(self.lbl_power_percentage, 1, 3)
+        
         main_layout.addLayout(bars_layout)
     
     def _apply_styles(self):
@@ -110,7 +116,15 @@ class GPUInfoPanel(QtWidgets.QWidget):
             QLabel[class="value_total_label"] {{ font-size: 10px; qproperty-alignment: 'AlignCenter'; }}
             QPushButton {{ border: none; background-color: transparent; }}
             QFrame {{ background-color: {theme['border']}; }}
-            QProgressBar {{ color: {theme['progress_text']}; border: 1px solid {theme['border']}; padding: 1px; border-radius: 8px; background-color: {theme['progress_bg']}; text-align: center; height: 20px; }}
+            QProgressBar {{
+                color: {theme['progress_text']};
+                border: 1px solid {theme['border']};
+                padding: 1px;
+                border-radius: 8px;
+                background-color: {theme['progress_bg']};
+                text-align: center;
+                height: 20px;
+            }}
             QProgressBar::chunk {{ background-color: {theme['progress_chunk']}; border-radius: 7px; }}
         """)
         self.lbl_gpumodel.setObjectName("lbl_gpumodel")
@@ -163,12 +177,10 @@ class GPUInfoPanel(QtWidgets.QWidget):
         
         mem_used = float(smi_data.get("memory.used", 0)); mem_total = float(smi_data.get("memory.total", 1))
         mem_percentage = int(mem_used * 100 / mem_total) if mem_total > 0 else 0
-        self.lbl_mem_percentage.setText(f"{mem_percentage}%")
         self.progress_mem.setValue(mem_percentage)
         
         power_draw = float(smi_data.get("power.draw", 0)); power_limit = float(smi_data.get("enforced.power.limit", 1))
         power_percentage = int(power_draw * 100 / power_limit) if power_limit > 0 else 0
-        self.lbl_power_percentage.setText(f"{power_percentage}%")
         self.progress_power.setValue(power_percentage)
 
 class MainWindow(QtWidgets.QWidget):

@@ -10,7 +10,15 @@ import os
 import socket
 import platform
 import argparse
+import shlex
+try:
+    import paramiko
+except ImportError:
+    print("Warning: paramiko is not installed. Password-based SSH will not be available. Run 'pip install paramiko'")
+    paramiko = None
+import getpass
 from subprocess import Popen, PIPE
+import traceback
 
 is_running = False
 
@@ -241,42 +249,194 @@ def get_iostream(commandline):
 def proc_smireader(fields, main_window, smi_stdout, proc):
     global is_running
     is_running = True
-    while is_running:
+    
+    # Paramiko's stdout is a ChannelFile which can be iterated directly
+    # and needs decoding.
+    def get_lines(stream):
+        if hasattr(stream, 'channel'): # Likely a paramiko stream
+            try:
+                for line in stream:
+                    yield line
+            except Exception as e:
+                print(f"Paramiko stream reading error: {e}")
+                return
+        else: # Subprocess stream
+            while is_running:
+                line = stream.readline()
+                if not line:
+                    break
+                yield line
+
+    for smi_line in get_lines(smi_stdout):
+        if not is_running: break
         try:
-            smi_line = smi_stdout.readline()
-            if not smi_line: print("SMI stream ended."); is_running = False; break
+            if not smi_line.strip(): continue
             smi_data = {k.strip(): v.strip() for k, v in zip(fields, smi_line.strip().split(","))}
             idx = int(smi_data["index"])
-            if idx >= len(main_window.panel_list): main_window.add_new_panel_async().signal_update.emit(smi_data)
-            else: main_window.panel_list[idx].signal_update.emit(smi_data)
+            if idx >= len(main_window.panel_list):
+                main_window.add_new_panel_async().signal_update.emit(smi_data)
+            else:
+                main_window.panel_list[idx].signal_update.emit(smi_data)
         except Exception as e:
-            print(f"Stopping data reader due to an error: {e}"); is_running = False; break
-    print("SMI reader thread finished."); proc.kill()
+            print(f"Stopping data reader due to an error: {e}");
+            is_running = False
+            break
+            
+    print("SMI reader thread finished.")
+    if proc:
+        proc.kill()
 
 def parse_args():
     par = argparse.ArgumentParser(description="A cross-platform GPU status monitor.")
     par.add_argument("-H", "--host", help="Remote host to connect to via SSH")
     par.add_argument("-p", "--port", type=int, default=22, help="SSH port")
+    par.add_argument("-u", "--user", help="SSH username")
+    par.add_argument("-P", "--password", help="SSH password")
+    par.add_argument("--ssh-args", help="Extra ssh args (string) inserted before the host, e.g. '-i C:/path/id_rsa -o StrictHostKeyChecking=no'", default="")
     par.add_argument("--dark", action="store_true", help="Enable dark mode")
     return par.parse_args()
+
+def get_iostream_paramiko(hostname, port, username, password, command):
+    if not paramiko:
+        raise NotImplementedError("Paramiko library is not installed.")
+    
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    
+    print(f"Connecting to {username or 'default user'}@{hostname}:{port} using password...")
+    client.connect(hostname, port=port, username=username, password=password, timeout=10)
+    
+    # Execute the command
+    stdin, stdout, stderr = client.exec_command(" ".join(command), get_pty=True)
+    
+    # We need to keep the client object alive to keep the streams open
+    # Return a dummy proc object that holds a reference to the client
+    class DummyProc:
+        def __init__(self, client):
+            self.client = client
+        def kill(self):
+            self.client.close()
+
+    return DummyProc(client), stdout, stderr
 
 def main():
     global is_running
     fields = ["index", "count", "pci.bus_id", "name", "uuid", "memory.used", "memory.total", "temperature.gpu", "power.draw", "enforced.power.limit", "clocks.current.graphics", "fan.speed", "utilization.gpu"]
     args = parse_args()
+    # If host is provided but no password given, prompt interactively when possible
+    if args.host and not args.password:
+        # only prompt if running in an interactive terminal
+        try:
+            if sys.stdin.isatty():
+                prompt_user = None
+                # If user included username in -H like user@host, do not override
+                if '@' in args.host and not args.user:
+                    prompt_user = args.host.split('@', 1)[0]
+                if args.user:
+                    prompt_user = args.user
+                user_prompt = f"Password for {prompt_user or 'remote user'}: "
+                pwd = getpass.getpass(user_prompt)
+                if pwd:
+                    args.password = pwd
+        except Exception:
+            # non-interactive environment or other issue; fall through
+            pass
     cmd_gpu_stat = ["nvidia-smi", "--query-gpu=" + ",".join(fields), "--format=csv,noheader,nounits", "-lms", "300"]
     hostname = socket.gethostname()
+    ssh_hostname = None
+    ssh_username = args.user
+
     if args.host:
-        cmd_gpu_stat = ["ssh", "-p", str(args.port), args.host] + cmd_gpu_stat
-        hostname = args.host
+        if '@' in args.host and not ssh_username:
+            try:
+                user, host = args.host.rsplit('@', 1)
+                ssh_username = user
+                ssh_hostname = host
+            except ValueError:
+                ssh_hostname = args.host # Not a valid user@host format
+        else:
+            ssh_hostname = args.host
+        
+        hostname = ssh_hostname # for window title
+
     try:
-        proc_gpu_stat, gpu_stat, _ = get_iostream(cmd_gpu_stat)
-    except FileNotFoundError:
-        print(f"Error: Command not found. Make sure 'nvidia-smi' or 'ssh' is in your system's PATH."); return
+        if ssh_hostname and args.password and paramiko:
+            # Use paramiko for password-based auth
+            proc_gpu_stat, gpu_stat, gpu_err = get_iostream_paramiko(
+                hostname=ssh_hostname,
+                port=args.port,
+                username=ssh_username,
+                password=args.password,
+                command=cmd_gpu_stat
+            )
+        elif ssh_hostname:
+            # Use subprocess for key-based auth
+            ssh_connect_str = f"{ssh_username}@{ssh_hostname}" if ssh_username else ssh_hostname
+            ssh_cmd = ["ssh", "-p", str(args.port)]
+            default_ssh_opts = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
+            ssh_cmd += default_ssh_opts
+            if args.ssh_args:
+                try:
+                    extra_args = shlex.split(args.ssh_args)
+                    ssh_cmd += extra_args
+                except Exception:
+                    print("Warning: failed to parse --ssh-args; passing raw string")
+                    ssh_cmd.append(args.ssh_args)
+            ssh_cmd.append(ssh_connect_str)
+            cmd_gpu_stat = ssh_cmd + cmd_gpu_stat
+            
+            try:
+                print("Executing:", " ".join(shlex.quote(x) for x in cmd_gpu_stat))
+            except Exception:
+                print("Executing (raw):", cmd_gpu_stat)
+            proc_gpu_stat, gpu_stat, gpu_err = get_iostream(cmd_gpu_stat)
+        else:
+            # Local execution
+            try:
+                try:
+                    print("Executing local:", " ".join(shlex.quote(x) for x in cmd_gpu_stat))
+                except Exception:
+                    print("Executing local (raw):", cmd_gpu_stat)
+                proc_gpu_stat, gpu_stat, gpu_err = get_iostream(cmd_gpu_stat)
+            except Exception as e:
+                print("Failed to start local nvidia-smi:", e)
+                traceback.print_exc()
+                return
+
+    except (FileNotFoundError, NotImplementedError) as e:
+        print(f"Error: {e}. Make sure 'nvidia-smi' or 'ssh' is in your system's PATH, or paramiko is installed."); return
+    except Exception as e:
+        print(f"Failed to start monitoring process: {e}")
+        traceback.print_exc()
+        return
+
     app = QApplication(sys.argv)
     mw = MainWindow(window_name="GPU Status on " + hostname, dark_mode=args.dark)
     th = threading.Thread(target=proc_smireader, name="SMI-StdoutReader", args=(fields, mw, gpu_stat, proc_gpu_stat), daemon=True)
     th.start()
+    
+    def _stderr_printer(err_stream, proc):
+        try:
+            # For paramiko, the stream is a ChannelStderrFile which can be iterated
+            if hasattr(err_stream, '__iter__'):
+                 for line in err_stream:
+                    print("SSH/SMI stderr:", line.strip())
+            else: # For subprocess, it's a file-like object
+                while True:
+                    line = err_stream.readline()
+                    if not line:
+                        break
+                    print("SSH/SMI stderr:", line.strip())
+        except Exception as e:
+            print("stderr reader stopped due to:", e)
+
+    try:
+        if gpu_err is not None:
+            thr_err = threading.Thread(target=_stderr_printer, args=(gpu_err, proc_gpu_stat), daemon=True)
+            thr_err.start()
+    except Exception:
+        pass
+        
     mw.show()
     app.exec()
     is_running = False
